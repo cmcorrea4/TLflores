@@ -53,6 +53,37 @@ DESCRIPCIONES = {
     "tulips":     "Tulipán — elegancia en primavera"
 }
 
+# ─── Carga compatible entre versiones de Keras ───────────────────────────────
+# Un .keras es un ZIP con config.json (arquitectura) + model.weights.h5 (pesos).
+# Las versiones nuevas de Keras (como la de Colab) escriben en config.json
+# parámetros que las versiones anteriores no conocen, p. ej. 'quantization_config'.
+# Los quitamos del config antes de cargar: los pesos no se tocan.
+CLAVES_NUEVAS = {"quantization_config"}
+
+def _limpiar(obj):
+    if isinstance(obj, dict):
+        return {k: _limpiar(v) for k, v in obj.items() if k not in CLAVES_NUEVAS}
+    if isinstance(obj, list):
+        return [_limpiar(v) for v in obj]
+    return obj
+
+def cargar_modelo(ruta):
+    import zipfile
+    import keras
+
+    ruta_limpia = ruta + ".compat.keras"
+    with zipfile.ZipFile(ruta) as zin, zipfile.ZipFile(ruta_limpia, "w") as zout:
+        for item in zin.namelist():
+            datos = zin.read(item)
+            if item == "config.json":
+                datos = json.dumps(_limpiar(json.loads(datos))).encode()
+            zout.writestr(item, datos)
+    try:
+        # compile=False: solo vamos a predecir, no necesitamos el optimizador
+        return keras.models.load_model(ruta_limpia, compile=False)
+    finally:
+        os.unlink(ruta_limpia)
+
 # ─── Función de predicción ───────────────────────────────────────────────────
 def predecir(imagen_pil, modelo):
     import tensorflow as tf
@@ -99,7 +130,7 @@ if archivo_modelo and archivo_clases:
             tmp_path = tmp.name
 
         with st.spinner("Cargando modelo... esto puede tardar unos segundos"):
-            modelo = tf.keras.models.load_model(tmp_path)
+            modelo = cargar_modelo(tmp_path)
         os.unlink(tmp_path)  # Borramos el temporal
 
         clases = json.load(archivo_clases)
